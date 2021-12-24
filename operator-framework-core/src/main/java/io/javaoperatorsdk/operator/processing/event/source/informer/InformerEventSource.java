@@ -1,112 +1,75 @@
 package io.javaoperatorsdk.operator.processing.event.source.informer;
 
-import java.util.Objects;
 import java.util.Optional;
 import java.util.function.Predicate;
 import java.util.stream.Stream;
 
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
 import io.fabric8.kubernetes.api.model.HasMetadata;
-import io.fabric8.kubernetes.client.KubernetesClient;
+import io.fabric8.kubernetes.api.model.KubernetesResourceList;
+import io.fabric8.kubernetes.client.dsl.MixedOperation;
+import io.fabric8.kubernetes.client.dsl.Resource;
 import io.fabric8.kubernetes.client.informers.ResourceEventHandler;
-import io.fabric8.kubernetes.client.informers.SharedInformer;
-import io.fabric8.kubernetes.client.informers.cache.Store;
+import io.javaoperatorsdk.operator.api.reconciler.EventSourceContext;
 import io.javaoperatorsdk.operator.processing.event.Event;
 import io.javaoperatorsdk.operator.processing.event.EventHandler;
-import io.javaoperatorsdk.operator.processing.event.ResourceID;
-import io.javaoperatorsdk.operator.processing.event.source.AbstractResourceEventSource;
-import io.javaoperatorsdk.operator.processing.event.source.AssociatedSecondaryResourceIdentifier;
-import io.javaoperatorsdk.operator.processing.event.source.PrimaryResourcesRetriever;
+import io.javaoperatorsdk.operator.processing.event.source.EventSourceContextAware;
 import io.javaoperatorsdk.operator.processing.event.source.ResourceCache;
 
 public class InformerEventSource<T extends HasMetadata, P extends HasMetadata>
-    extends AbstractResourceEventSource<P, T>
-    implements ResourceCache<T> {
+    extends ManagedInformerEventSource<T, P, InformerConfiguration<T, P>>
+    implements ResourceCache<T>, ResourceEventHandler<T> {
 
-  private static final Logger log = LoggerFactory.getLogger(InformerEventSource.class);
+  private final InformerConfiguration<T, P> configuration;
 
-  private final SharedInformer<T> sharedInformer;
-  private final PrimaryResourcesRetriever<T> secondaryToPrimaryResourcesIdSet;
-  private final AssociatedSecondaryResourceIdentifier<P> associatedWith;
-  private final boolean skipUpdateEventPropagationIfNoChange;
+  public InformerEventSource(MixedOperation<T, KubernetesResourceList<T>, Resource<T>> client,
+      InformerConfiguration<T, P> configuration, EventSourceContext<P> context) {
+    super(client, configuration);
+    this.configuration = configuration;
 
-  public InformerEventSource(SharedInformer<T> sharedInformer,
-      PrimaryResourcesRetriever<T> resourceToTargetResourceIDSet) {
-    this(sharedInformer, resourceToTargetResourceIDSet, null, true);
+    // init mappers with context if needed
+    if (context != null) {
+      final var primaryResourcesRetriever = configuration.getPrimaryResourcesRetriever();
+      if (primaryResourcesRetriever instanceof EventSourceContextAware) {
+        ((EventSourceContextAware) primaryResourcesRetriever).initWith(context);
+      }
+
+      final var associatedResourceIdentifier = configuration.getAssociatedResourceIdentifier();
+      if (associatedResourceIdentifier instanceof EventSourceContextAware) {
+        ((EventSourceContextAware) associatedResourceIdentifier).initWith(context);
+      }
+    }
   }
 
-  public InformerEventSource(KubernetesClient client, Class<T> type,
-      PrimaryResourcesRetriever<T> resourceToTargetResourceIDSet) {
-    this(client, type, resourceToTargetResourceIDSet, false);
+  @Override
+  public void onAdd(T t) {
+    propagateEvent(t);
   }
 
-  public InformerEventSource(KubernetesClient client, Class<T> type,
-      PrimaryResourcesRetriever<T> resourceToTargetResourceIDSet,
-      AssociatedSecondaryResourceIdentifier<P> associatedWith,
-      boolean skipUpdateEventPropagationIfNoChange) {
-    this(client.informers().sharedIndexInformerFor(type, 0), resourceToTargetResourceIDSet,
-        associatedWith,
-        skipUpdateEventPropagationIfNoChange);
-  }
-
-  InformerEventSource(KubernetesClient client, Class<T> type,
-      PrimaryResourcesRetriever<T> resourceToTargetResourceIDSet,
-      boolean skipUpdateEventPropagationIfNoChange) {
-    this(client.informers().sharedIndexInformerFor(type, 0), resourceToTargetResourceIDSet, null,
-        skipUpdateEventPropagationIfNoChange);
-  }
-
-  public InformerEventSource(SharedInformer<T> sharedInformer,
-      PrimaryResourcesRetriever<T> resourceToTargetResourceIDSet,
-      AssociatedSecondaryResourceIdentifier<P> associatedWith,
-      boolean skipUpdateEventPropagationIfNoChange) {
-    super(sharedInformer.getApiTypeClass());
-    this.sharedInformer = sharedInformer;
-    this.secondaryToPrimaryResourcesIdSet = resourceToTargetResourceIDSet;
-    this.skipUpdateEventPropagationIfNoChange = skipUpdateEventPropagationIfNoChange;
-    if (sharedInformer.isRunning()) {
-      log.warn(
-          "Informer is already running on event source creation, this is not desirable and may " +
-              "lead to non deterministic behavior.");
+  @Override
+  public void onUpdate(T oldObject, T newObject) {
+    if (newObject == null) {
+      // this is a fix for this potential issue with informer:
+      // https://github.com/java-operator-sdk/java-operator-sdk/issues/830
+      propagateEvent(oldObject);
+      return;
     }
 
-    this.associatedWith =
-        Objects.requireNonNullElseGet(associatedWith, () -> ResourceID::fromResource);
+    if (configuration.isSkipUpdateEventPropagationIfNoChange() &&
+        oldObject.getMetadata().getResourceVersion()
+            .equals(newObject.getMetadata().getResourceVersion())) {
+      return;
+    }
+    propagateEvent(newObject);
+  }
 
-    sharedInformer.addEventHandler(new ResourceEventHandler<>() {
-      @Override
-      public void onAdd(T t) {
-        propagateEvent(t);
-      }
-
-      @Override
-      public void onUpdate(T oldObject, T newObject) {
-        if (newObject == null) {
-          // this is a fix for this potential issue with informer:
-          // https://github.com/java-operator-sdk/java-operator-sdk/issues/830
-          propagateEvent(oldObject);
-          return;
-        }
-
-        if (InformerEventSource.this.skipUpdateEventPropagationIfNoChange &&
-            oldObject.getMetadata().getResourceVersion()
-                .equals(newObject.getMetadata().getResourceVersion())) {
-          return;
-        }
-        propagateEvent(newObject);
-      }
-
-      @Override
-      public void onDelete(T t, boolean b) {
-        propagateEvent(t);
-      }
-    });
+  @Override
+  public void onDelete(T t, boolean b) {
+    propagateEvent(t);
   }
 
   private void propagateEvent(T object) {
-    var primaryResourceIdSet = secondaryToPrimaryResourcesIdSet.associatedPrimaryResources(object);
+    var primaryResourceIdSet =
+        configuration.getPrimaryResourcesRetriever().associatedPrimaryResources(object);
     if (primaryResourceIdSet.isEmpty()) {
       return;
     }
@@ -126,16 +89,12 @@ public class InformerEventSource<T extends HasMetadata, P extends HasMetadata>
 
   @Override
   public void start() {
-    sharedInformer.run();
+    manager().start();
   }
 
   @Override
   public void stop() {
-    sharedInformer.close();
-  }
-
-  private Store<T> getStore() {
-    return sharedInformer.getStore();
+    manager().stop();
   }
 
   /**
@@ -145,37 +104,14 @@ public class InformerEventSource<T extends HasMetadata, P extends HasMetadata>
    * @param resource the primary resource we want to retrieve the associated resource for
    * @return the informed resource associated with the specified primary resource
    */
+  @Override
   public Optional<T> getAssociated(P resource) {
-    final var id = associatedWith.associatedSecondaryID(resource);
+    final var id = configuration.getAssociatedResourceIdentifier().associatedSecondaryID(resource);
     return get(id);
-  }
-
-
-  public SharedInformer<T> getSharedInformer() {
-    return sharedInformer;
-  }
-
-  @Override
-  public Optional<T> get(ResourceID resourceID) {
-    return Optional.ofNullable(sharedInformer.getStore()
-        .getByKey(io.fabric8.kubernetes.client.informers.cache.Cache.namespaceKeyFunc(
-            resourceID.getNamespace().orElse(null),
-            resourceID.getName())));
-  }
-
-  @Override
-  public Stream<T> list(Predicate<T> predicate) {
-    return getStore().list().stream().filter(predicate);
   }
 
   @Override
   public Stream<T> list(String namespace, Predicate<T> predicate) {
-    return getStore().list().stream()
-        .filter(v -> namespace.equals(v.getMetadata().getNamespace()) && predicate.test(v));
-  }
-
-  @Override
-  public Stream<ResourceID> keys() {
-    return getStore().listKeys().stream().map(Mappers::fromString);
+    return manager().list(namespace, predicate);
   }
 }
