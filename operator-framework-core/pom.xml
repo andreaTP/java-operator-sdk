@@ -50,12 +50,12 @@
     </plugins>
   </build>
 
-
   <dependencies>
     <!-- We use the OpenShift client, because functionally it is a superset of the Kubernetes client -->
     <dependency>
       <groupId>io.fabric8</groupId>
       <artifactId>kubernetes-client</artifactId>
+      <version>${fabric8-client.version}</version>
     </dependency>
 
     <dependency>
@@ -98,6 +98,7 @@
     <dependency>
       <groupId>io.fabric8</groupId>
       <artifactId>kubernetes-server-mock</artifactId>
+      <version>${fabric8-client.version}</version>
       <scope>test</scope>
     </dependency>
     <dependency>

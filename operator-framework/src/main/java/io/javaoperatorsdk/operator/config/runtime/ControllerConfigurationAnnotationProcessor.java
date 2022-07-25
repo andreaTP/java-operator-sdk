@@ -57,6 +57,9 @@ public class ControllerConfigurationAnnotationProcessor extends AbstractProcesso
             .map(e -> (TypeElement) e)
             .forEach(this::recordCRType);
       }
+    } catch (Exception e) {
+      log.error("DEBUG: ");
+      e.printStackTrace();
     } finally {
       if (roundEnv.processingOver()) {
         controllersResourceWriter.flush();

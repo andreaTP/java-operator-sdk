@@ -81,6 +81,29 @@
     </dependency>
   </dependencies>
 
+  <profiles>
+    <profile>
+      <id>loom</id>
+      <activation>
+        <jdk>[19,)</jdk>
+      </activation>
+      <build>
+        <plugins>
+          <plugin>
+            <groupId>org.apache.maven.plugins</groupId>
+            <artifactId>maven-compiler-plugin</artifactId>
+            <version>${maven-compiler-plugin.version}</version>
+            <configuration>
+              <source>19</source>
+              <target>19</target>
+              <compilerArgs>--enable-preview,-proc:none</compilerArgs>
+            </configuration>
+          </plugin>
+        </plugins>
+      </build>
+    </profile>
+  </profiles>
+
   <build>
     <plugins>
       <plugin>
@@ -97,8 +120,8 @@
             </goals>
             <configuration>
               <compilerArgs>
-                    <arg>-proc:none</arg>
-                </compilerArgs>
+                <arg>-proc:none</arg>
+              </compilerArgs>
             </configuration>
           </execution>
         </executions>

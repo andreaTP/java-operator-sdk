@@ -6,6 +6,10 @@ import java.util.HashSet;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 import java.util.function.Consumer;
 
 import org.slf4j.Logger;
@@ -28,6 +32,12 @@ import io.javaoperatorsdk.operator.processing.LifecycleAware;
 @SuppressWarnings("rawtypes")
 public class Operator implements LifecycleAware {
   private static final Logger log = LoggerFactory.getLogger(Operator.class);
+
+  private static final Runtime.Version javaVersion = Runtime.version();
+  private static final ExecutorService executorService =
+      javaVersion.feature() >= 19 ? Executors.newCachedThreadPool()
+          : Executors.newVirtualThreadPerTaskExecutor();
+
   private final KubernetesClient kubernetesClient;
   private final ControllerManager controllers = new ControllerManager();
 
@@ -215,15 +225,20 @@ public class Operator implements LifecycleAware {
       }
     }
 
+    private ConcurrentLinkedQueue<Future<?>> runningControllers = new ConcurrentLinkedQueue<>();
+
     public synchronized void start() {
-      controllers().parallelStream().forEach(Controller::start);
+      controllers().forEach(c -> runningControllers.add(executorService.submit(() -> c.start())));
       started = true;
     }
 
     public synchronized void stop() {
-      controllers().parallelStream().forEach(closeable -> {
-        log.debug("closing {}", closeable);
-        closeable.stop();
+      runningControllers.forEach(c -> c.cancel(true));
+      controllers().forEach(closeable -> {
+        executorService.submit(() -> {
+          log.debug("closing {}", closeable);
+          closeable.stop();
+        });
       });
 
       started = false;

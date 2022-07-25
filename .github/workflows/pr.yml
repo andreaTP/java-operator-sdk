@@ -21,7 +21,7 @@ jobs:
         uses: actions/setup-java@v3
         with:
           distribution: temurin
-          java-version: 17
+          java-version: 19
           cache: 'maven'
       - name: Check code format
         run: |
@@ -34,15 +34,17 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        java: [ 11, 17 ]
-        kubernetes: ['v1.20.15','v1.21.12', 'v1.22.9', 'v1.23.6', 'v1.24.0' ]
-        exclude:
-          - java: 11
-            kubernetes: 'v1.20.15'
-          - java: 11
-            kubernetes: 'v1.21.12'
-          - java: 11
-            kubernetes: 'v1.22.9'
+        java : 19
+        kubernetes: 'v1.24.0'
+#        java: [ 11, 17 ]
+#        kubernetes: ['v1.20.15','v1.21.12', 'v1.22.9', 'v1.23.6', 'v1.24.0' ]
+#        exclude:
+#          - java: 11
+#            kubernetes: 'v1.20.15'
+#          - java: 11
+#            kubernetes: 'v1.21.12'
+#          - java: 11
+#            kubernetes: 'v1.22.9'
     steps:
       - uses: actions/checkout@v3
       - name: Set up Java and Maven
